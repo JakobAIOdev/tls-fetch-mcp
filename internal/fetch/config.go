@@ -8,10 +8,14 @@ import (
 )
 
 const (
-	defaultResponseLimit int64 = 512 * 1024
-	defaultTimeout             = 30
-	defaultMaxTimeout          = 120
-	defaultMaxSessions         = 64
+	defaultResponseLimit     int64 = 512 * 1024
+	defaultTimeout                 = 30
+	defaultMaxTimeout              = 120
+	defaultMaxSessions             = 64
+	defaultSessionTTL              = 30 * 60
+	defaultMaxResponses            = 32
+	defaultResponseTTL             = 5 * 60
+	defaultResponseReadLimit       = 128 * 1024
 )
 
 // Config controls the server-side security and resource limits. Tool callers
@@ -24,6 +28,10 @@ type Config struct {
 	DefaultTimeout   int
 	MaxTimeout       int
 	MaxSessions      int
+	SessionTTL       int
+	MaxResponses     int
+	ResponseTTL      int
+	MaxReadBytes     int64
 }
 
 func ConfigFromEnv() (Config, error) {
@@ -33,6 +41,10 @@ func ConfigFromEnv() (Config, error) {
 		DefaultTimeout:   defaultTimeout,
 		MaxTimeout:       defaultMaxTimeout,
 		MaxSessions:      defaultMaxSessions,
+		SessionTTL:       defaultSessionTTL,
+		MaxResponses:     defaultMaxResponses,
+		ResponseTTL:      defaultResponseTTL,
+		MaxReadBytes:     defaultResponseReadLimit,
 	}
 
 	var err error
@@ -54,11 +66,51 @@ func ConfigFromEnv() (Config, error) {
 	if cfg.MaxSessions, err = envPositiveInt("MCP_TLS_FETCH_MAX_SESSIONS", cfg.MaxSessions); err != nil {
 		return Config{}, err
 	}
+	if cfg.SessionTTL, err = envPositiveInt("MCP_TLS_FETCH_SESSION_TTL_SECONDS", cfg.SessionTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxResponses, err = envPositiveInt("MCP_TLS_FETCH_MAX_STORED_RESPONSES", cfg.MaxResponses); err != nil {
+		return Config{}, err
+	}
+	if cfg.ResponseTTL, err = envPositiveInt("MCP_TLS_FETCH_RESPONSE_TTL_SECONDS", cfg.ResponseTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.MaxReadBytes, err = envPositiveInt64("MCP_TLS_FETCH_MAX_RESPONSE_READ_BYTES", cfg.MaxReadBytes); err != nil {
+		return Config{}, err
+	}
 	if cfg.DefaultTimeout > cfg.MaxTimeout {
 		return Config{}, fmt.Errorf("MCP_TLS_FETCH_DEFAULT_TIMEOUT_SECONDS must not exceed MCP_TLS_FETCH_MAX_TIMEOUT_SECONDS")
 	}
 
 	return cfg, nil
+}
+
+func (cfg Config) withDefaults() Config {
+	if cfg.MaxResponseBytes <= 0 {
+		cfg.MaxResponseBytes = defaultResponseLimit
+	}
+	if cfg.DefaultTimeout <= 0 {
+		cfg.DefaultTimeout = defaultTimeout
+	}
+	if cfg.MaxTimeout <= 0 {
+		cfg.MaxTimeout = defaultMaxTimeout
+	}
+	if cfg.MaxSessions <= 0 {
+		cfg.MaxSessions = defaultMaxSessions
+	}
+	if cfg.SessionTTL <= 0 {
+		cfg.SessionTTL = defaultSessionTTL
+	}
+	if cfg.MaxResponses <= 0 {
+		cfg.MaxResponses = defaultMaxResponses
+	}
+	if cfg.ResponseTTL <= 0 {
+		cfg.ResponseTTL = defaultResponseTTL
+	}
+	if cfg.MaxReadBytes <= 0 {
+		cfg.MaxReadBytes = defaultResponseReadLimit
+	}
+	return cfg
 }
 
 func envBoolean(name string) (bool, error) {

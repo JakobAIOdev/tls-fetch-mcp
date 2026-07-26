@@ -40,16 +40,37 @@ func TestServerExposesExpectedTools(t *testing.T) {
 		t.Fatalf("ListTools() error = %v", err)
 	}
 	var names []string
+	toolsByName := make(map[string]*mcp.Tool)
 	for _, tool := range result.Tools {
 		names = append(names, tool.Name)
+		toolsByName[tool.Name] = tool
 		if tool.InputSchema == nil {
 			t.Errorf("tool %q has no input schema", tool.Name)
 		}
 	}
-	for _, name := range []string{"tls_fetch", "tls_profiles", "tls_session_clear"} {
+	for _, name := range []string{
+		"tls_get",
+		"tls_request",
+		"tls_fetch",
+		"tls_profiles",
+		"tls_session_warmup",
+		"tls_session_info",
+		"tls_session_clear",
+		"tls_response_read",
+		"tls_response_search",
+	} {
 		if !slices.Contains(names, name) {
 			t.Fatalf("tool names = %v, missing %s", names, name)
 		}
+	}
+	if annotations := toolsByName["tls_get"].Annotations; annotations == nil || !annotations.ReadOnlyHint {
+		t.Fatalf("tls_get annotations = %+v, want read-only", annotations)
+	}
+	requestAnnotations := toolsByName["tls_request"].Annotations
+	if requestAnnotations == nil ||
+		requestAnnotations.DestructiveHint == nil ||
+		!*requestAnnotations.DestructiveHint {
+		t.Fatalf("tls_request annotations = %+v, want destructive", requestAnnotations)
 	}
 
 	profilesResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{

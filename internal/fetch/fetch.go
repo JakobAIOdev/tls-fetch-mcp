@@ -54,21 +54,30 @@ type Input struct {
 	MaxResponseBytes int64             `json:"max_response_bytes,omitempty" jsonschema:"Maximum response bytes to return; capped by the server"`
 	ProxyURL         string            `json:"proxy_url,omitempty" jsonschema:"Optional HTTP or SOCKS proxy; disabled unless the server permits proxies"`
 	SessionID        string            `json:"session_id,omitempty" jsonschema:"Optional cookie-session identifier using letters, digits, dots, underscores or hyphens"`
+	IncludeBody      *bool             `json:"include_body,omitempty" jsonschema:"Include the response body inline; defaults to true"`
+	StoreResponse    bool              `json:"store_response,omitempty" jsonschema:"Store the bounded response body temporarily and return a response_id for read/search tools"`
 }
 
 type Output struct {
-	Status        int                 `json:"status"`
-	StatusText    string              `json:"status_text"`
-	FinalURL      string              `json:"final_url"`
-	Headers       map[string][]string `json:"headers"`
-	Body          string              `json:"body"`
-	BodyEncoding  string              `json:"body_encoding"`
-	ContentType   string              `json:"content_type,omitempty"`
-	Truncated     bool                `json:"truncated"`
-	ElapsedMillis int64               `json:"elapsed_ms"`
-	Profile       string              `json:"profile"`
-	SessionID     string              `json:"session_id,omitempty"`
-	CookiesStored int                 `json:"cookies_stored,omitempty"`
+	Status          int                 `json:"status"`
+	StatusText      string              `json:"status_text"`
+	FinalURL        string              `json:"final_url"`
+	Headers         map[string][]string `json:"headers"`
+	Body            string              `json:"body"`
+	BodyEncoding    string              `json:"body_encoding"`
+	ContentType     string              `json:"content_type,omitempty"`
+	Truncated       bool                `json:"truncated"`
+	ElapsedMillis   int64               `json:"elapsed_ms"`
+	Profile         string              `json:"profile"`
+	SessionID       string              `json:"session_id,omitempty"`
+	CookiesStored   int                 `json:"cookies_stored,omitempty"`
+	CookieNames     []string            `json:"cookie_names,omitempty"`
+	RedactedHeaders []string            `json:"redacted_headers,omitempty"`
+	RedirectHistory []string            `json:"redirect_history,omitempty"`
+	HTTPVersion     string              `json:"http_version,omitempty"`
+	ContentLength   int64               `json:"content_length"`
+	BytesReturned   int64               `json:"bytes_returned"`
+	ResponseID      string              `json:"response_id,omitempty"`
 }
 
 type ProfilesInput struct{}
@@ -88,17 +97,22 @@ type SessionClearOutput struct {
 }
 
 type Fetcher struct {
-	config   Config
-	policy   policy
-	sessions map[string]tlsclient.CookieJar
-	mu       sync.Mutex
+	config    Config
+	policy    policy
+	sessions  map[string]*sessionState
+	responses map[string]*storedResponse
+	now       func() time.Time
+	mu        sync.Mutex
 }
 
 func New(config Config) *Fetcher {
+	config = config.withDefaults()
 	return &Fetcher{
-		config:   config,
-		policy:   newPolicy(config),
-		sessions: make(map[string]tlsclient.CookieJar),
+		config:    config,
+		policy:    newPolicy(config),
+		sessions:  make(map[string]*sessionState),
+		responses: make(map[string]*storedResponse),
+		now:       time.Now,
 	}
 }
 
@@ -146,6 +160,7 @@ func (f *Fetcher) Do(ctx context.Context, input Input) (Output, error) {
 		return Output{}, err
 	}
 	followRedirects := input.FollowRedirects == nil || *input.FollowRedirects
+	includeBody := input.IncludeBody == nil || *input.IncludeBody
 
 	options := []tlsclient.HttpClientOption{
 		tlsclient.WithTimeoutSeconds(timeout),
@@ -161,6 +176,7 @@ func (f *Fetcher) Do(ctx context.Context, input Input) (Output, error) {
 		}
 		options = append(options, tlsclient.WithCookieJar(sessionJar))
 	}
+	var redirectHistory []string
 	if !followRedirects {
 		options = append(options, tlsclient.WithNotFollowRedirects())
 	} else {
@@ -168,7 +184,11 @@ func (f *Fetcher) Do(ctx context.Context, input Input) (Output, error) {
 			if len(via) >= 10 {
 				return fmt.Errorf("stopped after 10 redirects")
 			}
-			return f.policy.validateParsedURL(req.Context(), req.URL)
+			if err := f.policy.validateParsedURL(req.Context(), req.URL); err != nil {
+				return err
+			}
+			redirectHistory = append(redirectHistory, req.URL.String())
+			return nil
 		}))
 	}
 	if input.ProxyURL != "" {
@@ -214,56 +234,52 @@ func (f *Fetcher) Do(ctx context.Context, input Input) (Output, error) {
 	}
 
 	bodyText, encoding := encodeBody(body)
-	cookiesStored := 0
+	if !includeBody {
+		bodyText = ""
+	}
+	cookiesStored, cookieNames := 0, []string(nil)
 	if sessionJar != nil {
-		for _, cookies := range sessionJar.GetAllCookies() {
-			cookiesStored += len(cookies)
+		cookiesStored, cookieNames = cookieSummary(sessionJar)
+		f.touchSession(input.SessionID)
+	}
+	headers, redactedHeaders := sanitizeResponseHeaders(resp.Header)
+	finalURL := parsedURL.String()
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	responseID := ""
+	if input.StoreResponse {
+		responseID, err = f.storeResponse(body, storedResponseMetadata{
+			BodyEncoding: encoding,
+			ContentType:  resp.Header.Get("Content-Type"),
+			FinalURL:     finalURL,
+			Truncated:    truncated,
+		})
+		if err != nil {
+			return Output{}, err
 		}
 	}
 	return Output{
-		Status:        resp.StatusCode,
-		StatusText:    http.StatusText(resp.StatusCode),
-		FinalURL:      resp.Request.URL.String(),
-		Headers:       map[string][]string(resp.Header),
-		Body:          bodyText,
-		BodyEncoding:  encoding,
-		ContentType:   resp.Header.Get("Content-Type"),
-		Truncated:     truncated,
-		ElapsedMillis: time.Since(started).Milliseconds(),
-		Profile:       profileName,
-		SessionID:     input.SessionID,
-		CookiesStored: cookiesStored,
+		Status:          resp.StatusCode,
+		StatusText:      http.StatusText(resp.StatusCode),
+		FinalURL:        finalURL,
+		Headers:         headers,
+		Body:            bodyText,
+		BodyEncoding:    encoding,
+		ContentType:     resp.Header.Get("Content-Type"),
+		Truncated:       truncated,
+		ElapsedMillis:   time.Since(started).Milliseconds(),
+		Profile:         profileName,
+		SessionID:       input.SessionID,
+		CookiesStored:   cookiesStored,
+		CookieNames:     cookieNames,
+		RedactedHeaders: redactedHeaders,
+		RedirectHistory: redirectHistory,
+		HTTPVersion:     resp.Proto,
+		ContentLength:   resp.ContentLength,
+		BytesReturned:   int64(len(body)),
+		ResponseID:      responseID,
 	}, nil
-}
-
-func (f *Fetcher) ClearSession(sessionID string) (bool, error) {
-	if err := validateSessionID(sessionID); err != nil {
-		return false, err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if _, exists := f.sessions[sessionID]; !exists {
-		return false, nil
-	}
-	delete(f.sessions, sessionID)
-	return true, nil
-}
-
-func (f *Fetcher) session(sessionID string) (tlsclient.CookieJar, error) {
-	if err := validateSessionID(sessionID); err != nil {
-		return nil, err
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if jar, exists := f.sessions[sessionID]; exists {
-		return jar, nil
-	}
-	if len(f.sessions) >= f.config.MaxSessions {
-		return nil, fmt.Errorf("cookie-session limit reached (%d); clear an existing session with tls_session_clear", f.config.MaxSessions)
-	}
-	jar := tlsclient.NewCookieJar()
-	f.sessions[sessionID] = jar
-	return jar, nil
 }
 
 func validateSessionID(sessionID string) error {

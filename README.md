@@ -5,7 +5,7 @@
 **Browser-like HTTP requests for AI coding agents — implemented as a secure, local MCP server in Go.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/JakobAIOdev/tls-fetch-mcp/ci.yml?branch=main&style=flat-square)](https://github.com/JakobAIOdev/tls-fetch-mcp/actions/workflows/ci.yml)
-[![Go](https://img.shields.io/badge/Go-1.24%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/)
 [![MCP](https://img.shields.io/badge/MCP-stdio-6f42c1?style=flat-square)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/github/license/JakobAIOdev/tls-fetch-mcp?style=flat-square)](LICENSE)
 
@@ -28,18 +28,27 @@ for MCP.
 - **Browser TLS fingerprints** — Chrome, Firefox, Safari, Brave, Opera, mobile
   applications, and every profile exposed by the installed `tls-client`
   version.
-- **Complete HTTP requests** — GET, HEAD, POST, PUT, PATCH, DELETE, and OPTIONS
-  with custom headers, bodies, redirect behavior, and timeouts.
+- **Intent-aware tools** — read-only GET/HEAD traffic is isolated in
+  `tls_get`; POST, PUT, PATCH, DELETE, and OPTIONS live in the explicitly
+  mutating `tls_request` tool.
 - **Accurate header behavior** — sensible browser headers, matching user-agent
   versions, and optional explicit header ordering.
-- **Cookie sessions** — preserve cookies across multi-step request flows with a
-  caller-chosen `session_id`, then explicitly clear the session.
+- **Managed cookie sessions** — warm up regional homepages, preserve cookies
+  across multi-step flows, inspect safe session metadata, and automatically
+  expire idle sessions.
+- **Large-response workflow** — keep a bounded response out of the agent
+  context, receive a short-lived `response_id`, then search it or read it in
+  byte ranges.
 - **Proxy support** — optional HTTP, HTTPS, SOCKS5, and SOCKS5H proxies.
-- **Structured responses** — status, final URL, headers, content type, body,
-  timing, truncation state, selected profile, and session metadata.
+- **Structured responses** — status, HTTP version, final URL, redirect history,
+  safe headers, content length, returned bytes, body encoding, timing,
+  truncation state, selected profile, and session metadata.
+- **Secret-safe output** — `Set-Cookie`, authorization, and proxy
+  authentication response headers are redacted. Cookie values are never
+  returned; only cookie names and counts are exposed.
 - **Binary-safe output** — non-UTF-8 response bodies are returned as Base64.
 - **Resource controls** — server-side timeout, response-size, session-count,
-  and redirect limits.
+  response-handle count, TTL, read-window, and redirect limits.
 - **Secure by default** — private networks, loopback, link-local ranges,
   multicast, unspecified addresses, and caller-supplied proxies are blocked
   unless the operator explicitly enables them.
@@ -58,18 +67,20 @@ flowchart LR
     D --> E["tls-client"]
     E -->|HTTP/1.1 or HTTP/2| F["Target website / API"]
     E <--> G["In-memory cookie session"]
+    B <--> H["Bounded response store"]
 ```
 
 The MCP client starts the server as a local `stdio` process. Every requested
 URL passes through the host allowlist and IP policy. The server then builds a
-fingerprinted client, performs the request, limits the response, and returns a
-typed MCP result.
+fingerprinted client, performs the request, redacts secret response headers,
+limits the body, and returns a typed MCP result. Cookie sessions and stored
+responses exist only in memory and expire automatically.
 
 ## Quick start
 
 ### Requirements
 
-- Go 1.24.1 or newer
+- Go 1.25 or newer
 - An MCP client with local `stdio` server support
 
 ### Build from source
@@ -114,12 +125,33 @@ Create `.codex/config.toml` in the project where Codex should use the server:
 command = "/absolute/path/to/tls-fetch-mcp"
 enabled = true
 required = true
-enabled_tools = ["tls_fetch", "tls_profiles", "tls_session_clear"]
+enabled_tools = [
+  "tls_get",
+  "tls_request",
+  "tls_profiles",
+  "tls_session_warmup",
+  "tls_session_info",
+  "tls_session_clear",
+  "tls_response_read",
+  "tls_response_search",
+]
 startup_timeout_sec = 10
 tool_timeout_sec = 120
 default_tools_approval_mode = "prompt"
 
+[mcp_servers.tls_fetch.tools.tls_get]
+approval_mode = "auto"
+
 [mcp_servers.tls_fetch.tools.tls_profiles]
+approval_mode = "auto"
+
+[mcp_servers.tls_fetch.tools.tls_session_info]
+approval_mode = "auto"
+
+[mcp_servers.tls_fetch.tools.tls_response_read]
+approval_mode = "auto"
+
+[mcp_servers.tls_fetch.tools.tls_response_search]
 approval_mode = "auto"
 ```
 
@@ -131,8 +163,9 @@ MCP_TLS_FETCH_ALLOW_PRIVATE = "true"
 ```
 
 Restart Codex or open a new task after changing the configuration. Use `/mcp`
-to verify that `tls_fetch`, `tls_profiles`, and `tls_session_clear` are
-available.
+to verify that the tools are available. The legacy `tls_fetch` compatibility
+tool is intentionally omitted here so Codex naturally selects `tls_get` or
+`tls_request`.
 
 ### Global CLI configuration
 
@@ -157,38 +190,56 @@ codex mcp list
 
 ## Tool reference
 
-### `tls_fetch`
+### `tls_get`
 
-Sends one fingerprinted HTTP request.
+Sends a read-only, fingerprinted GET or HEAD request. This is the default tool
+for inspecting websites, discovering JSON endpoints, and authorized scraping.
 
 | Input | Type | Default | Description |
 | --- | --- | --- | --- |
 | `url` | string | required | Absolute HTTP or HTTPS URL |
-| `method` | string | `GET` | GET, HEAD, POST, PUT, PATCH, DELETE, or OPTIONS |
+| `method` | string | `GET` | GET or HEAD |
 | `headers` | object | browser defaults | Request header name-value pairs |
 | `header_order` | string[] | browser-like order | Explicit lower-case header order |
-| `body` | string | empty | Raw request body |
 | `profile` | string | `chrome_146` | TLS profile returned by `tls_profiles` |
 | `follow_redirects` | boolean | `true` | Follow up to ten policy-checked redirects |
 | `timeout_seconds` | integer | `30` | Whole-request timeout, capped by server configuration |
-| `max_response_bytes` | integer | `524288` | Per-request response limit, capped by server configuration |
+| `max_response_bytes` | integer | `524288` | Returned or stored body limit, capped by server configuration |
 | `proxy_url` | string | empty | Optional proxy; requires operator opt-in |
 | `session_id` | string | empty | Optional cookie-session identifier |
+| `include_body` | boolean | `true` | Include the bounded body directly in the result |
+| `store_response` | boolean | `false` | Return a temporary `response_id` for read/search tools |
 
 Example prompt:
 
 ```text
-Use tls_fetch with the chrome_146 profile to GET
-https://example.com. Return the status, final URL, content type,
-and the HTML title.
+Use tls_get with the chrome_146 profile to inspect https://example.com.
+Return the status, final URL, content type, and HTML title.
 ```
 
-Example POST:
+For a large response:
 
 ```text
-Use tls_fetch to POST {"query":"mcp"} to https://example.com/api/search.
-Set Content-Type to application/json and use the firefox_148 profile.
+Fetch the catalog with tls_get using store_response=true and
+include_body=false. Search the stored response for "pagination", then read
+only the relevant byte range.
 ```
+
+### `tls_request`
+
+Sends POST, PUT, PATCH, DELETE, or OPTIONS requests. It accepts the same
+options as `tls_get`, plus `body`. GET and HEAD are deliberately rejected so
+MCP clients can apply separate approval rules to read and write traffic.
+
+```text
+Use tls_request to POST {"query":"mcp"} to
+https://example.com/api/search. Set Content-Type to application/json.
+```
+
+### `tls_fetch`
+
+Compatibility alias for existing clients. It still accepts every supported
+method, but new integrations should prefer `tls_get` and `tls_request`.
 
 ### `tls_profiles`
 
@@ -196,21 +247,41 @@ Returns the default profile and every fingerprint supported by the pinned
 `tls-client` version. Profile availability follows the dependency version
 rather than a hardcoded MCP schema enum.
 
-### `tls_session_clear`
+### `tls_session_warmup`
 
-Deletes one in-memory cookie session.
-
-Cookie-session workflow:
+Fetches a bootstrap URL without returning its body and retains cookies in the
+provided `session_id`. This is useful when an API first returns `401`, but the
+same request succeeds after visiting the regional homepage.
 
 ```text
-1. Fetch the login page with session_id "example-login".
-2. Submit the form with the same session_id.
-3. Fetch the authenticated page with the same session_id.
-4. Clear "example-login" with tls_session_clear.
+1. Warm up https://www.example.de/ as session "catalog-de".
+2. Call tls_get for the catalog endpoint with session_id "catalog-de".
+3. Inspect tls_session_info if authentication still fails.
+4. Clear the session when the flow is finished.
 ```
 
-Session IDs may contain letters, digits, dots, underscores, and hyphens and
-must not exceed 128 characters.
+### `tls_session_info`
+
+Returns existence, created/last-used/expiry timestamps, cookie count, and
+cookie names. Cookie values are never exposed.
+
+### `tls_session_clear`
+
+Deletes one in-memory cookie session. Session IDs may contain letters, digits,
+dots, underscores, and hyphens and must not exceed 128 characters.
+
+### `tls_response_search`
+
+Searches literal UTF-8 text in a stored response. It returns byte offsets and
+compact context windows. Matching is ASCII case-insensitive by default and can
+be made case-sensitive.
+
+### `tls_response_read`
+
+Reads a stored response from a zero-based byte `offset`, up to `max_bytes`.
+The result includes `next_offset`, `total_bytes`, and `eof`, so callers can
+page without placing the entire document in model context. Non-UTF-8 chunks
+are Base64-encoded.
 
 ## Configuration
 
@@ -226,6 +297,10 @@ callers may choose stricter request limits but cannot exceed these values.
 | `MCP_TLS_FETCH_DEFAULT_TIMEOUT_SECONDS` | `30` | Default whole-request timeout |
 | `MCP_TLS_FETCH_MAX_TIMEOUT_SECONDS` | `120` | Maximum caller-selectable timeout |
 | `MCP_TLS_FETCH_MAX_SESSIONS` | `64` | Maximum in-memory cookie sessions |
+| `MCP_TLS_FETCH_SESSION_TTL_SECONDS` | `1800` | Sliding idle TTL for cookie sessions |
+| `MCP_TLS_FETCH_MAX_STORED_RESPONSES` | `32` | Maximum temporary response handles |
+| `MCP_TLS_FETCH_RESPONSE_TTL_SECONDS` | `300` | TTL for temporary response handles |
+| `MCP_TLS_FETCH_MAX_RESPONSE_READ_BYTES` | `131072` | Maximum bytes returned by one response-read call |
 
 Example: restrict the server to one domain and increase the response limit to
 2 MiB:
@@ -250,7 +325,11 @@ The server treats every tool argument as untrusted.
 - Unspecified and multicast destinations remain blocked even when private
   targets are enabled.
 - Proxy use requires explicit operator opt-in.
-- Responses and session counts are bounded.
+- Sensitive response headers are removed before MCP serialization.
+- Cookie values remain inside the in-memory jar and are never returned.
+- Response bodies, response-handle counts, read windows, session counts, and
+  redirect counts are bounded.
+- Sessions and stored responses expire automatically.
 
 When a proxy is enabled, the proxy performs the final target connection and may
 resolve DNS differently from the MCP host. Only configure proxies you trust.
@@ -265,7 +344,9 @@ For the complete threat model and reporting process, see
 - HTTP/3 is intentionally disabled so the direct connection can always pass
   through the dial-time SSRF policy. HTTP/1.1 and HTTP/2 fingerprinting remain
   active.
-- Cookie sessions live only in memory and disappear when the server exits.
+- Cookie sessions and response handles live only in memory, expire by TTL, and
+  disappear when the server exits.
+- Stored responses contain only the already-bounded response bytes.
 - A successful request does not grant permission to scrape a service or bypass
   its access controls.
 
@@ -304,10 +385,8 @@ archives and SHA-256 checksums.
 
 ## Roadmap
 
-- Optional persistent encrypted cookie stores
-- Request/response observability without leaking secrets
 - Configurable profile aliases and default profiles
-- Optional extraction helpers for HTML and JSON
+- Optional HTML selectors and JSON-path extraction helpers
 - HTTP/3 support with equivalent connection-policy enforcement
 
 Contributions and focused feature proposals are welcome. Read

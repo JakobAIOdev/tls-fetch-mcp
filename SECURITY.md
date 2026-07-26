@@ -43,13 +43,21 @@ The server provides several safeguards:
 - URL validation before DNS lookup
 - IP validation before the request and again at connection time
 - Policy checks for redirect destinations
-- Bounded redirects, timeouts, response sizes, and cookie sessions
+- Bounded redirects, timeouts, response sizes, cookie sessions, response
+  handles, and response-read windows
+- Automatic expiry for cookie sessions and stored responses
 - Restricted transport-managed request headers
+- Redaction of cookie and authentication response headers
 - Explicit opt-in for private targets and proxies
 
 These safeguards do not make arbitrary web content trustworthy. Responses may
 contain prompt injection, malicious markup, secrets, or misleading
 instructions. MCP clients should treat fetched content as untrusted data.
+
+Header redaction does not inspect or rewrite response bodies. A site can place
+credentials, personal data, or other sensitive values in HTML or JSON.
+Temporary response handles retain the already-bounded body in process memory
+until their TTL expires or the server stops.
 
 Enabling `MCP_TLS_FETCH_ALLOW_PRIVATE` expands the network boundary to local,
 private, and link-local destinations. Only enable it for trusted local
