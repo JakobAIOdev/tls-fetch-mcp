@@ -41,3 +41,36 @@ jobs:
           --verify-tag
           --generate-notes
           --title "$GITHUB_REF_NAME"
+
+      - name: Check out Homebrew tap
+        if: ${{ !contains(github.ref_name, '-') }}
+        uses: actions/checkout@v7
+        with:
+          repository: JakobAIOdev/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+          fetch-depth: 0
+
+      - name: Update Homebrew formula
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          sh scripts/render-homebrew-formula.sh \
+            "$version" \
+            dist/checksums.txt \
+            homebrew-tap/Formula/tls-fetch-mcp.rb
+
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap add Formula/tls-fetch-mcp.rb
+
+          if git -C homebrew-tap diff --cached --quiet; then
+            echo "Homebrew formula is already current."
+            exit 0
+          fi
+
+          git -C homebrew-tap commit \
+            -m "Brew formula update for tls-fetch-mcp version $GITHUB_REF_NAME"
+          git -C homebrew-tap pull --rebase origin main
+          git -C homebrew-tap push origin HEAD:main

@@ -1,0 +1,53 @@
+# typed: false
+# frozen_string_literal: true
+
+class TlsFetchMcp < Formula
+  desc "Browser-like HTTP requests for AI coding agents over MCP"
+  homepage "https://github.com/JakobAIOdev/tls-fetch-mcp"
+  version "@@VERSION@@"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.intel?
+      url "https://github.com/JakobAIOdev/tls-fetch-mcp/releases/download/v@@VERSION@@/tls-fetch-mcp_@@VERSION@@_darwin_amd64.tar.gz"
+      sha256 "@@DARWIN_AMD64_SHA256@@"
+
+      define_method(:install) do
+        bin.install "tls-fetch-mcp"
+      end
+    end
+
+    if Hardware::CPU.arm?
+      url "https://github.com/JakobAIOdev/tls-fetch-mcp/releases/download/v@@VERSION@@/tls-fetch-mcp_@@VERSION@@_darwin_arm64.tar.gz"
+      sha256 "@@DARWIN_ARM64_SHA256@@"
+
+      define_method(:install) do
+        bin.install "tls-fetch-mcp"
+      end
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
+      url "https://github.com/JakobAIOdev/tls-fetch-mcp/releases/download/v@@VERSION@@/tls-fetch-mcp_@@VERSION@@_linux_amd64.tar.gz"
+      sha256 "@@LINUX_AMD64_SHA256@@"
+
+      define_method(:install) do
+        bin.install "tls-fetch-mcp"
+      end
+    end
+
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "https://github.com/JakobAIOdev/tls-fetch-mcp/releases/download/v@@VERSION@@/tls-fetch-mcp_@@VERSION@@_linux_arm64.tar.gz"
+      sha256 "@@LINUX_ARM64_SHA256@@"
+
+      define_method(:install) do
+        bin.install "tls-fetch-mcp"
+      end
+    end
+  end
+
+  test do
+    assert_match "tls-fetch-mcp @@VERSION@@", shell_output("#{bin}/tls-fetch-mcp --version")
+  end
+end
