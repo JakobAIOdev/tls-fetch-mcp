@@ -37,8 +37,10 @@ for MCP.
   across multi-step flows, inspect safe session metadata, and automatically
   expire idle sessions.
 - **Large-response workflow** — keep a bounded response out of the agent
-  context, receive a short-lived `response_id`, then search it or read it in
-  byte ranges.
+  context, receive a short-lived `response_id`, then extract only the useful
+  data, search it, or read it in byte ranges.
+- **Structured extraction** — run named CSS queries against HTML or RFC 9535
+  JSONPath queries against JSON without making another network request.
 - **Proxy support** — optional HTTP, HTTPS, SOCKS5, and SOCKS5H proxies.
 - **Structured responses** — status, HTTP version, final URL, redirect history,
   safe headers, content length, returned bytes, body encoding, timing,
@@ -68,6 +70,7 @@ flowchart LR
     E -->|HTTP/1.1 or HTTP/2| F["Target website / API"]
     E <--> G["In-memory cookie session"]
     B <--> H["Bounded response store"]
+    H --> I["CSS / JSONPath extraction"]
 ```
 
 The MCP client starts the server as a local `stdio` process. Every requested
@@ -132,6 +135,7 @@ enabled_tools = [
   "tls_session_warmup",
   "tls_session_info",
   "tls_session_clear",
+  "tls_response_extract",
   "tls_response_read",
   "tls_response_search",
 ]
@@ -146,6 +150,9 @@ approval_mode = "auto"
 approval_mode = "auto"
 
 [mcp_servers.tls_fetch.tools.tls_session_info]
+approval_mode = "auto"
+
+[mcp_servers.tls_fetch.tools.tls_response_extract]
 approval_mode = "auto"
 
 [mcp_servers.tls_fetch.tools.tls_response_read]
@@ -208,7 +215,7 @@ for inspecting websites, discovering JSON endpoints, and authorized scraping.
 | `proxy_url` | string | empty | Optional proxy; requires operator opt-in |
 | `session_id` | string | empty | Optional cookie-session identifier |
 | `include_body` | boolean | `true` | Include the bounded body directly in the result |
-| `store_response` | boolean | `false` | Return a temporary `response_id` for read/search tools |
+| `store_response` | boolean | `false` | Return a temporary `response_id` for extract/search/read tools |
 
 Example prompt:
 
@@ -220,9 +227,10 @@ Return the status, final URL, content type, and HTML title.
 For a large response:
 
 ```text
-Fetch the catalog with tls_get using store_response=true and
-include_body=false. Search the stored response for "pagination", then read
-only the relevant byte range.
+Fetch the catalog with tls_get using store_response=true and include_body=false.
+Use tls_response_extract on the returned response_id to get each item's title,
+price.amount, and URL. Return at most 20 values per query. Only fall back to
+tls_response_search or tls_response_read when the structure is unknown.
 ```
 
 ### `tls_request`
@@ -270,6 +278,62 @@ cookie names. Cookie values are never exposed.
 Deletes one in-memory cookie session. Session IDs may contain letters, digits,
 dots, underscores, and hyphens and must not exceed 128 characters.
 
+### `tls_response_extract`
+
+Extracts compact, structured values from a response created with
+`store_response=true`. It never performs a network request. `format` defaults
+to `auto` and uses the stored content type plus body detection.
+
+For HTML, each named query accepts a CSS selector and one of four modes:
+
+- `text` (default) returns normalized descendant text.
+- `inner_html` returns the selected node's contents.
+- `outer_html` returns the complete selected node.
+- `attribute` returns one named attribute. Set `resolve_urls=true` to resolve
+  URL attributes such as `href` or `src` against the response's final URL.
+
+```json
+{
+  "response_id": "resp_...",
+  "format": "html",
+  "queries": [
+    {"name": "titles", "selector": "article h2"},
+    {
+      "name": "links",
+      "selector": "article a",
+      "mode": "attribute",
+      "attribute": "href",
+      "resolve_urls": true
+    }
+  ]
+}
+```
+
+For JSON, selectors are
+[RFC 9535 JSONPath](https://www.rfc-editor.org/rfc/rfc9535.html) expressions.
+Values are returned as compact JSON together with their normalized result path,
+so strings remain distinguishable from numbers, booleans, arrays, and objects.
+
+```json
+{
+  "response_id": "resp_...",
+  "format": "json",
+  "queries": [
+    {"name": "titles", "selector": "$.items[*].title"},
+    {"name": "affordable", "selector": "$.items[?@.price.amount < 20]"}
+  ],
+  "max_results": 20,
+  "max_output_bytes": 65536
+}
+```
+
+Each call accepts at most 16 named queries. `max_results` defaults to 20 per
+query and is capped at 100. Serialized output defaults to 64 KiB and is capped
+by `MCP_TLS_FETCH_MAX_RESPONSE_READ_BYTES`. Results expose matched, returned,
+and limited counts. Extraction operates only on the stored, bounded bytes; a
+truncated JSON document must be fetched again with a larger
+`max_response_bytes`.
+
 ### `tls_response_search`
 
 Searches literal UTF-8 text in a stored response. It returns byte offsets and
@@ -300,7 +364,7 @@ callers may choose stricter request limits but cannot exceed these values.
 | `MCP_TLS_FETCH_SESSION_TTL_SECONDS` | `1800` | Sliding idle TTL for cookie sessions |
 | `MCP_TLS_FETCH_MAX_STORED_RESPONSES` | `32` | Maximum temporary response handles |
 | `MCP_TLS_FETCH_RESPONSE_TTL_SECONDS` | `300` | TTL for temporary response handles |
-| `MCP_TLS_FETCH_MAX_RESPONSE_READ_BYTES` | `131072` | Maximum bytes returned by one response-read call |
+| `MCP_TLS_FETCH_MAX_RESPONSE_READ_BYTES` | `131072` | Maximum bytes returned by one response-read or extraction call |
 
 Example: restrict the server to one domain and increase the response limit to
 2 MiB:
@@ -329,6 +393,8 @@ The server treats every tool argument as untrusted.
 - Cookie values remain inside the in-memory jar and are never returned.
 - Response bodies, response-handle counts, read windows, session counts, and
   redirect counts are bounded.
+- Extraction query counts, selector lengths, results per query, and serialized
+  output are bounded.
 - Sessions and stored responses expire automatically.
 
 When a proxy is enabled, the proxy performs the final target connection and may
@@ -346,7 +412,9 @@ For the complete threat model and reporting process, see
   active.
 - Cookie sessions and response handles live only in memory, expire by TTL, and
   disappear when the server exits.
-- Stored responses contain only the already-bounded response bytes.
+- Stored responses and extraction operate only on the already-bounded response
+  bytes. HTML can often be parsed when truncated, but truncated JSON is usually
+  incomplete and cannot be decoded.
 - A successful request does not grant permission to scrape a service or bypass
   its access controls.
 
@@ -375,7 +443,7 @@ Project layout:
 
 ```text
 cmd/tls-fetch-mcp/   MCP server entry point and tool registration
-internal/fetch/      Fetch engine, URL policy, configuration, and tests
+internal/fetch/      Fetch, sessions, response storage, extraction, policy, and tests
 .github/             CI, dependency updates, and contribution templates
 ```
 
@@ -386,7 +454,7 @@ archives and SHA-256 checksums.
 ## Roadmap
 
 - Configurable profile aliases and default profiles
-- Optional HTML selectors and JSON-path extraction helpers
+- Reusable extraction presets for common response shapes
 - HTTP/3 support with equivalent connection-policy enforcement
 
 Contributions and focused feature proposals are welcome. Read

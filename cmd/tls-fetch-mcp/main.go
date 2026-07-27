@@ -45,7 +45,7 @@ func newServer(fetcher *fetch.Fetcher) *mcp.Server {
 			Instructions: "Use tls_get for authorized read-only web inspection and scraping with browser-like TLS fingerprints. " +
 				"Use tls_request only when the task explicitly requires POST, PUT, PATCH, DELETE, or OPTIONS. " +
 				"For cookie-gated sites, call tls_session_warmup once and reuse its session_id. " +
-				"For large bodies, set store_response=true and include_body=false, then use tls_response_search or tls_response_read. " +
+				"For large or structured bodies, set store_response=true and include_body=false, then use tls_response_extract, tls_response_search or tls_response_read. " +
 				"Sensitive response headers are redacted. Respect site policies and rate limits. Private targets and proxies are disabled unless explicitly configured.",
 		},
 	)
@@ -55,7 +55,7 @@ func newServer(fetcher *fetch.Fetcher) *mcp.Server {
 		Title: "TLS Get",
 		Description: "Send an authorized GET or HEAD request with a browser-like TLS fingerprint. " +
 			"Use this as the default tool for web inspection, API discovery and scraping. " +
-			"Supports cookie sessions, redirects, bounded bodies and temporary response handles.",
+			"Supports cookie sessions, redirects, bounded bodies and temporary response handles for extraction, search or ranged reads.",
 		Annotations: &mcp.ToolAnnotations{
 			OpenWorldHint: boolPointer(true),
 			ReadOnlyHint:  true,
@@ -69,7 +69,7 @@ func newServer(fetcher *fetch.Fetcher) *mcp.Server {
 		Name:  "tls_request",
 		Title: "TLS Request",
 		Description: "Send an authorized mutating HTTP request (POST, PUT, PATCH, DELETE or OPTIONS) with a browser-like TLS fingerprint. " +
-			"Use tls_get for GET and HEAD. Supports request bodies, cookie sessions and temporary response handles.",
+			"Use tls_get for GET and HEAD. Supports request bodies, cookie sessions and temporary response handles for extraction, search or ranged reads.",
 		Annotations: &mcp.ToolAnnotations{
 			DestructiveHint: boolPointer(true),
 			OpenWorldHint:   boolPointer(true),
@@ -162,6 +162,19 @@ func newServer(fetcher *fetch.Fetcher) *mcp.Server {
 		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input fetch.ResponseReadInput) (*mcp.CallToolResult, fetch.ResponseReadOutput, error) {
 		output, err := fetcher.ReadResponse(input)
+		return nil, output, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "tls_response_extract",
+		Title:       "Extract Stored TLS Response",
+		Description: "Extract compact structured values from a temporary stored response. Supports CSS selectors for HTML and RFC 9535 JSONPath for JSON, with bounded query counts, result counts and serialized output.",
+		Annotations: &mcp.ToolAnnotations{
+			OpenWorldHint: boolPointer(false),
+			ReadOnlyHint:  true,
+		},
+	}, func(_ context.Context, _ *mcp.CallToolRequest, input fetch.ResponseExtractInput) (*mcp.CallToolResult, fetch.ResponseExtractOutput, error) {
+		output, err := fetcher.ExtractResponse(input)
 		return nil, output, err
 	})
 

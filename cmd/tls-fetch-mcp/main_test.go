@@ -57,6 +57,7 @@ func TestServerExposesExpectedTools(t *testing.T) {
 		"tls_session_info",
 		"tls_session_clear",
 		"tls_response_read",
+		"tls_response_extract",
 		"tls_response_search",
 	} {
 		if !slices.Contains(names, name) {
@@ -71,6 +72,13 @@ func TestServerExposesExpectedTools(t *testing.T) {
 		requestAnnotations.DestructiveHint == nil ||
 		!*requestAnnotations.DestructiveHint {
 		t.Fatalf("tls_request annotations = %+v, want destructive", requestAnnotations)
+	}
+	extractAnnotations := toolsByName["tls_response_extract"].Annotations
+	if extractAnnotations == nil ||
+		!extractAnnotations.ReadOnlyHint ||
+		extractAnnotations.OpenWorldHint == nil ||
+		*extractAnnotations.OpenWorldHint {
+		t.Fatalf("tls_response_extract annotations = %+v, want local read-only", extractAnnotations)
 	}
 
 	profilesResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
