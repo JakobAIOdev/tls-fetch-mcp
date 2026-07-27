@@ -33,6 +33,9 @@ jobs:
       - name: Run race detector
         run: go test -race ./...
 
+      - name: Test Homebrew formula renderer
+        run: sh scripts/test-render-homebrew-formula.sh
+
   test:
     name: Test (${{ matrix.os }})
     strategy:

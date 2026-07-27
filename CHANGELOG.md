@@ -22,6 +22,8 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Response-header redaction for cookies and authentication secrets
 - Server limits for session TTL, response TTL, stored response count, and
   response read windows
+- Automatic Homebrew formula updates for stable tagged releases, with formula
+  rendering covered by CI
 
 - Browser-like TLS requests through `bogdanfinn/tls-client`
 - Official Go MCP SDK integration over `stdio`

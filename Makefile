@@ -4,7 +4,7 @@ GO_FILES := cmd/tls-fetch-mcp/*.go internal/fetch/*.go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build check clean format format-check release-snapshot test test-integration test-race vet
+.PHONY: build check clean format format-check release-snapshot test test-integration test-packaging test-race vet
 
 build:
 	mkdir -p bin
@@ -20,6 +20,9 @@ test-integration:
 	@test -n "$$TLS_FETCH_INTEGRATION_URL" || (echo "TLS_FETCH_INTEGRATION_URL is required" && exit 1)
 	go test ./internal/fetch -run TestIntegrationTLSFetch -v
 
+test-packaging:
+	sh scripts/test-render-homebrew-formula.sh
+
 vet:
 	go vet ./...
 
@@ -29,7 +32,7 @@ format:
 format-check:
 	@test -z "$$(gofmt -l $(GO_FILES))" || (echo "Go files need formatting; run 'make format'" && exit 1)
 
-check: format-check test vet build
+check: format-check test test-packaging vet build
 
 release-snapshot:
 	sh scripts/build-release.sh "$(VERSION)"
