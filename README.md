@@ -83,8 +83,28 @@ responses exist only in memory and expire automatically.
 
 ### Requirements
 
-- Go 1.25 or newer
 - An MCP client with local `stdio` server support
+- Go 1.25 or newer when installing with Go or building from source
+
+### Homebrew
+
+Homebrew is the recommended installation method on macOS and Linux:
+
+```bash
+brew install jakobaiodev/tap/tls-fetch-mcp
+```
+
+Find the absolute binary path for your MCP client configuration:
+
+```bash
+command -v tls-fetch-mcp
+```
+
+### Install with Go
+
+```bash
+go install github.com/JakobAIOdev/tls-fetch-mcp/cmd/tls-fetch-mcp@latest
+```
 
 ### Build from source
 
@@ -108,10 +128,26 @@ Check a built binary:
 ./bin/tls-fetch-mcp --version
 ```
 
-Once the repository is published, installation with Go is also supported:
+### Update
+
+Homebrew installations:
+
+```bash
+brew update
+brew upgrade tls-fetch-mcp
+```
+
+Go installations:
 
 ```bash
 go install github.com/JakobAIOdev/tls-fetch-mcp/cmd/tls-fetch-mcp@latest
+```
+
+Source installations:
+
+```bash
+git pull --ff-only
+make build
 ```
 
 ## Use with Codex
