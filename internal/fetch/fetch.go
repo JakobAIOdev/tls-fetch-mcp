@@ -55,7 +55,7 @@ type Input struct {
 	ProxyURL         string            `json:"proxy_url,omitempty" jsonschema:"Optional HTTP or SOCKS proxy; disabled unless the server permits proxies"`
 	SessionID        string            `json:"session_id,omitempty" jsonschema:"Optional cookie-session identifier using letters, digits, dots, underscores or hyphens"`
 	IncludeBody      *bool             `json:"include_body,omitempty" jsonschema:"Include the response body inline; defaults to true"`
-	StoreResponse    bool              `json:"store_response,omitempty" jsonschema:"Store the bounded response body temporarily and return a response_id for read/search tools"`
+	StoreResponse    bool              `json:"store_response,omitempty" jsonschema:"Store the bounded response body temporarily and return a response_id for extract/search/read tools"`
 }
 
 type Output struct {

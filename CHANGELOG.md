@@ -14,6 +14,9 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Sliding cookie-session TTLs and safe cookie name/count metadata
 - Temporary bounded response handles with `tls_response_read` and
   `tls_response_search`
+- `tls_response_extract` for named CSS queries over HTML and RFC 9535 JSONPath
+  queries over JSON, including HTML text/markup/attribute modes and relative
+  URL resolution
 - Redirect history, HTTP version, content length, and byte-count metadata
 - Optional inline-body suppression with `include_body=false`
 - Response-header redaction for cookies and authentication secrets
