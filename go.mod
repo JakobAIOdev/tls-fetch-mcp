@@ -3,7 +3,7 @@ module github.com/JakobAIOdev/tls-fetch-mcp
 go 1.25.0
 
 require (
-	github.com/andybalholm/cascadia v1.3.3
+	github.com/andybalholm/cascadia v1.3.4
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
