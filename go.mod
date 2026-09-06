@@ -7,7 +7,7 @@ require (
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/theory/jsonpath v0.12.0
+	github.com/theory/jsonpath v0.12.1
 	golang.org/x/net v0.57.0
 )
 
